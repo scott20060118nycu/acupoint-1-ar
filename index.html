@@ -51,10 +51,10 @@
 </head>
 <body>
 
-  <h3>3D Acupoint AR System (Web)</h3>
+  <h3>3D Acupoint AR System</h3>
 
   <div class="canvas-container">
-    <video id="input_video" playsinline></video>
+    <video id="input_video" playsinline muted autoplay></video>
     <canvas id="output_canvas" width="640" height="480"></canvas>
   </div>
 
@@ -148,7 +148,7 @@
             canvasCtx.fillStyle = '#FF0000';
             canvasCtx.fill();
 
-            // 繪製文字 (需反向鏡像以防文字變顛倒)
+            // 繪製文字 (反向鏡像以防文字顛倒)
             canvasCtx.save();
             canvasCtx.translate(smoothed.x, smoothed.y);
             canvasCtx.scale(-1, 1);
@@ -189,16 +189,69 @@
 
     faceMesh.onResults(onResults);
 
-    // 啟動相機
-    const camera = new Camera(videoElement, {
-      onFrame: async () => {
-        await faceMesh.send({ image: videoElement });
-      },
-      width: 640,
-      height: 480
-    });
+    // ===== WebView 相容性相機啟動邏輯 =====
+    videoElement.muted = true;
+    videoElement.autoplay = true;
+    videoElement.setAttribute('playsinline', '');
 
-    camera.start();
+    let isProcessing = false;
+
+    async function startWebViewCamera() {
+      // 模式 1：指定標準前鏡頭解析度
+      const constraintsWithResolution = {
+        video: {
+          facingMode: 'user',
+          width: { ideal: 640 },
+          height: { ideal: 480 }
+        },
+        audio: false
+      };
+
+      // 模式 2：極簡相容模式（防止部分手機 WebView 拒絕特定解析度）
+      const minimalConstraints = {
+        video: true,
+        audio: false
+      };
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraintsWithResolution);
+        handleStream(stream);
+      } catch (err) {
+        console.warn("標準模式啟動失敗，切換至相容模式:", err);
+        try {
+          const fallbackStream = await navigator.mediaDevices.getUserMedia(minimalConstraints);
+          handleStream(fallbackStream);
+        } catch (finalErr) {
+          console.error("相機權限遭拒或無法存取", finalErr);
+          alert("無法讀取鏡頭！\n請確認手機【設定 > 應用程式 > Acupoint AR】已手動開啟【相機權限】。");
+        }
+      }
+    }
+
+    function handleStream(stream) {
+      if ('srcObject' in videoElement) {
+        videoElement.srcObject = stream;
+      } else {
+        videoElement.src = window.URL.createObjectURL(stream);
+      }
+      videoElement.play().then(() => {
+        requestAnimationFrame(processFrame);
+      }).catch(e => console.error("視訊播放失敗:", e));
+    }
+
+    async function processFrame() {
+      if (!videoElement.paused && !videoElement.ended && videoElement.readyState >= 2) {
+        if (!isProcessing) {
+          isProcessing = true;
+          await faceMesh.send({ image: videoElement });
+          isProcessing = false;
+        }
+      }
+      requestAnimationFrame(processFrame);
+    }
+
+    // 啟動相機
+    startWebViewCamera();
   </script>
 </body>
 </html>
