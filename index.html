@@ -45,6 +45,63 @@
       height: 100vh;
       display: block;
     }
+
+    /* 📸 原生風格拍照快門按鈕 */
+    .shutter-btn {
+      position: absolute;
+      bottom: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      border: 4px solid #FFFFFF;
+      background-color: rgba(255, 255, 255, 0.25);
+      cursor: pointer;
+      outline: none;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+      backdrop-filter: blur(4px);
+    }
+
+    .shutter-btn-inner {
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background-color: #FFFFFF;
+      transition: transform 0.1s ease, background-color 0.1s ease;
+    }
+
+    /* 按壓時縮放效果 */
+    .shutter-btn:active .shutter-btn-inner {
+      transform: scale(0.85);
+      background-color: #FF0055;
+    }
+
+    /* ⚡ 拍照閃光燈動畫 */
+    .flash-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background-color: #FFFFFF;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 20;
+    }
+
+    .flash-active {
+      animation: flashAnimation 0.35s ease-out;
+    }
+
+    @keyframes flashAnimation {
+      0% { opacity: 0.85; }
+      100% { opacity: 0; }
+    }
   </style>
 </head>
 <body>
@@ -52,14 +109,24 @@
   <div class="canvas-container">
     <video id="input_video" playsinline muted autoplay></video>
     <canvas id="output_canvas"></canvas>
+    
+    <!-- 閃光燈效果層 -->
+    <div id="flash_overlay" class="flash-overlay"></div>
+
+    <!-- 拍照按鈕 -->
+    <button id="snap_btn" class="shutter-btn" aria-label="拍照">
+      <div class="shutter-btn-inner"></div>
+    </button>
   </div>
 
   <script>
     const videoElement = document.getElementById('input_video');
     const canvasElement = document.getElementById('output_canvas');
     const canvasCtx = canvasElement.getContext('2d');
+    const snapBtn = document.getElementById('snap_btn');
+    const flashOverlay = document.getElementById('flash_overlay');
 
-    // 自動適應手機螢幕高解析度解析度
+    // 自動適應手機螢幕高解析度
     function resizeCanvas() {
       canvasElement.width = window.innerWidth * (window.devicePixelRatio || 1);
       canvasElement.height = window.innerHeight * (window.devicePixelRatio || 1);
@@ -102,7 +169,7 @@
       const vw = results.image.width;
       const vh = results.image.height;
 
-      // 自動計算 Cover 比例，徹底解決「畫面扁扁變形」問題
+      // 自動計算 Cover 比例，解決變形問題
       const canvasAspect = cw / ch;
       const imgAspect = vw / vh;
 
@@ -124,13 +191,13 @@
       canvasCtx.translate(cw, 0);
       canvasCtx.scale(-1, 1);
 
-      // 繪製畫面 (保證不拉伸變形)
+      // 繪製視訊畫面
       canvasCtx.drawImage(results.image, cw - offsetX - renderW, offsetY, renderW, renderH);
 
       if (results.multiFaceLandmarks) {
         for (const landmarks of results.multiFaceLandmarks) {
           
-          // 繪製 3D FaceMesh 網格（正確疊加於畫面）
+          // 繪製 3D FaceMesh 網格
           canvasCtx.save();
           canvasCtx.translate(cw - offsetX - renderW, offsetY);
           canvasCtx.scale(renderW / cw, renderH / ch);
@@ -176,7 +243,7 @@
             y: Math.round(cR_y + (nose.y - cR_y) * 0.45)
           };
 
-          // 繪製美化標籤與紅點
+          // 繪製標籤與紅點
           const drawPoint = (name, label, pt) => {
             const smoothed = adaptiveSmoothPoint(name, pt.x, pt.y);
 
@@ -212,7 +279,7 @@
             canvasCtx.roundRect(-textWidth / 2 - 6, -fontSize - 12, textWidth + 12, fontSize + 6, 4);
             canvasCtx.fill();
 
-            // 亮青色科技感字型
+            // 亮青色字體
             canvasCtx.fillStyle = '#00FFCC';
             canvasCtx.textAlign = 'center';
             canvasCtx.fillText(label, 0, -10);
@@ -299,6 +366,28 @@
       }
       requestAnimationFrame(processFrame);
     }
+
+    // 📸 拍照邏輯實作
+    snapBtn.addEventListener('click', () => {
+      // 1. 觸發閃光燈動畫
+      flashOverlay.classList.remove('flash-active');
+      void flashOverlay.offsetWidth; // 觸發重繪
+      flashOverlay.classList.add('flash-active');
+
+      // 2. 將當前帶有 3D 穴位 overlay 的 Canvas 導出為圖片
+      const imageURI = canvasElement.toDataURL('image/png');
+
+      // 3. 建立虛擬下載連結
+      const downloadLink = document.createElement('a');
+      const now = new Date();
+      const timestamp = `${now.getFullYear()}${now.getMonth()+1}${now.getDate()}_${now.getHours()}${now.getMinutes()}${now.getSeconds()}`;
+      
+      downloadLink.download = `Acupoint_AR_${timestamp}.png`;
+      downloadLink.href = imageURI;
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      document.body.removeChild(downloadLink);
+    });
 
     startWebViewCamera();
   </script>
