@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>3D Acupoint AR Tracking System</title>
+  <title>3D Acupoint AR System</title>
   
   <!-- 載入 MediaPipe 官方 JS 庫 -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -11,57 +11,61 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
 
   <style>
-    body {
-      margin: 0;
-      padding: 0;
-      background-color: #121212;
-      color: #ffffff;
-      font-family: Arial, sans-serif;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      overflow: hidden;
+    * {
+      box-sizing: border-box;
+      user-select: none;
     }
 
-    h3 {
-      margin: 10px 0;
-      font-size: 1.1rem;
-      color: #00ffcc;
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background-color: #000000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
 
     .canvas-container {
       position: relative;
-      width: 95vw;
-      max-width: 640px;
-      border-radius: 12px;
+      width: 100vw;
+      height: 100vh;
       overflow: hidden;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
     }
 
-    video { display: none; }
+    video { 
+      display: none; 
+    }
 
     canvas {
-      width: 100%;
-      height: auto;
+      width: 100vw;
+      height: 100vh;
       display: block;
     }
   </style>
 </head>
 <body>
 
-  <h3>3D Acupoint AR System</h3>
-
   <div class="canvas-container">
     <video id="input_video" playsinline muted autoplay></video>
-    <canvas id="output_canvas" width="640" height="480"></canvas>
+    <canvas id="output_canvas"></canvas>
   </div>
 
   <script>
     const videoElement = document.getElementById('input_video');
     const canvasElement = document.getElementById('output_canvas');
     const canvasCtx = canvasElement.getContext('2d');
+
+    // 自動適應手機螢幕高解析度解析度
+    function resizeCanvas() {
+      canvasElement.width = window.innerWidth * (window.devicePixelRatio || 1);
+      canvasElement.height = window.innerHeight * (window.devicePixelRatio || 1);
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
 
     // 自適應平滑歷史紀錄
     const smoothDict = {};
@@ -84,30 +88,64 @@
     }
 
     function onResults(results) {
+      const cw = canvasElement.width;
+      const ch = canvasElement.height;
+      
       canvasCtx.save();
-      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      canvasCtx.clearRect(0, 0, cw, ch);
 
-      // 水平鏡像翻轉繪製畫面
-      canvasCtx.translate(canvasElement.width, 0);
+      if (!results.image) {
+        canvasCtx.restore();
+        return;
+      }
+
+      const vw = results.image.width;
+      const vh = results.image.height;
+
+      // 自動計算 Cover 比例，徹底解決「畫面扁扁變形」問題
+      const canvasAspect = cw / ch;
+      const imgAspect = vw / vh;
+
+      let renderW, renderH, offsetX, offsetY;
+
+      if (imgAspect > canvasAspect) {
+        renderH = ch;
+        renderW = vw * (ch / vh);
+        offsetX = (cw - renderW) / 2;
+        offsetY = 0;
+      } else {
+        renderW = cw;
+        renderH = vh * (cw / vw);
+        offsetX = 0;
+        offsetY = (ch - renderH) / 2;
+      }
+
+      // 水平鏡像翻轉繪製
+      canvasCtx.translate(cw, 0);
       canvasCtx.scale(-1, 1);
-      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+      // 繪製畫面 (保證不拉伸變形)
+      canvasCtx.drawImage(results.image, cw - offsetX - renderW, offsetY, renderW, renderH);
 
       if (results.multiFaceLandmarks) {
         for (const landmarks of results.multiFaceLandmarks) {
-          // 1. 繪製灰色 3D 細微網格
-          drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {color: '#C0C0C070', lineWidth: 1});
           
-          // 2. 繪製綠色五官輪廓
-          drawConnectors(canvasCtx, landmarks, FACEMESH_CONTOURS, {color: '#00FF00', lineWidth: 1.2});
+          // 繪製 3D FaceMesh 網格（正確疊加於畫面）
+          canvasCtx.save();
+          canvasCtx.translate(cw - offsetX - renderW, offsetY);
+          canvasCtx.scale(renderW / cw, renderH / ch);
 
-          const w = canvasElement.width;
-          const h = canvasElement.height;
+          drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {color: '#C0C0C040', lineWidth: 1});
+          drawConnectors(canvasCtx, landmarks, FACEMESH_CONTOURS, {color: '#00FFCC70', lineWidth: 1.2});
+          canvasCtx.restore();
+
+          // 校正後的座標計算
           const getPt = (idx) => ({
-            x: Math.round(landmarks[idx].x * w),
-            y: Math.round(landmarks[idx].y * h)
+            x: Math.round(offsetX + landmarks[idx].x * renderW),
+            y: Math.round(offsetY + landmarks[idx].y * renderH)
           });
 
-          // 3. 剛性穴位幾何計算
+          // 剛性穴位幾何計算
           const yintang = getPt(6);
           const qingming_L = getPt(133), qingming_R = getPt(362);
           const zanzhu_L = getPt(55), zanzhu_R = getPt(285);
@@ -138,24 +176,46 @@
             y: Math.round(cR_y + (nose.y - cR_y) * 0.45)
           };
 
-          // 4. 繪製穴位標籤與紅點
+          // 繪製美化標籤與紅點
           const drawPoint = (name, label, pt) => {
             const smoothed = adaptiveSmoothPoint(name, pt.x, pt.y);
 
-            // 畫紅點
+            // 1. 外層紅光暈
             canvasCtx.beginPath();
-            canvasCtx.arc(smoothed.x, smoothed.y, 4, 0, 2 * Math.PI);
-            canvasCtx.fillStyle = '#FF0000';
+            canvasCtx.arc(smoothed.x, smoothed.y, 8, 0, 2 * Math.PI);
+            canvasCtx.fillStyle = 'rgba(255, 0, 85, 0.35)';
             canvasCtx.fill();
 
-            // 繪製文字 (反向鏡像以防文字顛倒)
+            // 2. 核心紅色圓點
+            canvasCtx.beginPath();
+            canvasCtx.arc(smoothed.x, smoothed.y, 4, 0, 2 * Math.PI);
+            canvasCtx.fillStyle = '#FF0055';
+            canvasCtx.fill();
+
+            // 3. 白色外框線
+            canvasCtx.lineWidth = 1.5;
+            canvasCtx.strokeStyle = '#FFFFFF';
+            canvasCtx.stroke();
+
+            // 4. 文字標籤 (反向鏡像以防文字顛倒)
             canvasCtx.save();
             canvasCtx.translate(smoothed.x, smoothed.y);
             canvasCtx.scale(-1, 1);
-            canvasCtx.fillStyle = '#FFFFFF';
-            canvasCtx.font = '10px Arial';
+
+            const fontSize = Math.max(12, Math.round(cw * 0.015));
+            canvasCtx.font = `bold ${fontSize}px Arial, sans-serif`;
+            const textWidth = canvasCtx.measureText(label).width;
+
+            // 半透明黑底氣泡膠囊
+            canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+            canvasCtx.beginPath();
+            canvasCtx.roundRect(-textWidth / 2 - 6, -fontSize - 12, textWidth + 12, fontSize + 6, 4);
+            canvasCtx.fill();
+
+            // 亮青色科技感字型
+            canvasCtx.fillStyle = '#00FFCC';
             canvasCtx.textAlign = 'center';
-            canvasCtx.fillText(label, 0, -6);
+            canvasCtx.fillText(label, 0, -10);
             canvasCtx.restore();
           };
 
@@ -189,7 +249,6 @@
 
     faceMesh.onResults(onResults);
 
-    // ===== WebView 相容性相機啟動邏輯 =====
     videoElement.muted = true;
     videoElement.autoplay = true;
     videoElement.setAttribute('playsinline', '');
@@ -197,33 +256,24 @@
     let isProcessing = false;
 
     async function startWebViewCamera() {
-      // 模式 1：指定標準前鏡頭解析度
-      const constraintsWithResolution = {
+      const constraints = {
         video: {
           facingMode: 'user',
-          width: { ideal: 640 },
-          height: { ideal: 480 }
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
         },
         audio: false
       };
 
-      // 模式 2：極簡相容模式（防止部分手機 WebView 拒絕特定解析度）
-      const minimalConstraints = {
-        video: true,
-        audio: false
-      };
-
       try {
-        const stream = await navigator.mediaDevices.getUserMedia(constraintsWithResolution);
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
         handleStream(stream);
       } catch (err) {
-        console.warn("標準模式啟動失敗，切換至相容模式:", err);
         try {
-          const fallbackStream = await navigator.mediaDevices.getUserMedia(minimalConstraints);
+          const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: true });
           handleStream(fallbackStream);
         } catch (finalErr) {
-          console.error("相機權限遭拒或無法存取", finalErr);
-          alert("無法讀取鏡頭！\n請確認手機【設定 > 應用程式 > Acupoint AR】已手動開啟【相機權限】。");
+          console.error("相機存取失敗:", finalErr);
         }
       }
     }
@@ -250,7 +300,6 @@
       requestAnimationFrame(processFrame);
     }
 
-    // 啟動相機
     startWebViewCamera();
   </script>
 </body>
