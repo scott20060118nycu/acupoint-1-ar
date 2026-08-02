@@ -45,6 +45,45 @@
       height: 100vh;
       display: block;
     }
+
+    /* 🎛️ 控制區按鈕通用樣式 (磨砂玻璃科技感) */
+    .ctrl-btn {
+      position: absolute;
+      top: 24px;
+      padding: 10px 16px;
+      border-radius: 20px;
+      background-color: rgba(0, 0, 0, 0.6);
+      font-size: 14px;
+      font-weight: bold;
+      letter-spacing: 1px;
+      cursor: pointer;
+      outline: none;
+      z-index: 10;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      transition: all 0.2s ease;
+    }
+
+    /* 右上角：顯示/隱藏標籤 */
+    #toggle_label_btn {
+      right: 20px;
+      border: 1.5px solid rgba(0, 255, 204, 0.6);
+      color: #00FFCC;
+    }
+
+    /* 左上角：刷新鏡頭 */
+    #reset_cam_btn {
+      left: 20px;
+      border: 1.5px solid rgba(255, 204, 0, 0.7);
+      color: #FFCC00;
+    }
+
+    /* 按壓反饋 */
+    .ctrl-btn:active {
+      transform: scale(0.92);
+      opacity: 0.8;
+    }
   </style>
 </head>
 <body>
@@ -52,12 +91,66 @@
   <div class="canvas-container">
     <video id="input_video" playsinline muted autoplay></video>
     <canvas id="output_canvas"></canvas>
+
+    <!-- 🔘 功能控制按鈕 -->
+    <button id="reset_cam_btn" class="ctrl-btn">🔄 刷新鏡頭</button>
+    <button id="toggle_label_btn" class="ctrl-btn">隱藏標籤</button>
   </div>
 
   <script>
     const videoElement = document.getElementById('input_video');
     const canvasElement = document.getElementById('output_canvas');
     const canvasCtx = canvasElement.getContext('2d');
+    const toggleLabelBtn = document.getElementById('toggle_label_btn');
+    const resetCamBtn = document.getElementById('reset_cam_btn');
+
+    // 🚩 開關狀態：預設顯示文字標籤
+    let showLabels = true;
+    let currentStream = null;
+    let isProcessing = false;
+
+    // 按鈕點擊切換標籤
+    toggleLabelBtn.addEventListener('click', () => {
+      showLabels = !showLabels;
+      if (showLabels) {
+        toggleLabelBtn.textContent = '隱藏標籤';
+        toggleLabelBtn.style.borderColor = 'rgba(0, 255, 204, 0.6)';
+        toggleLabelBtn.style.color = '#00FFCC';
+      } else {
+        toggleLabelBtn.textContent = '顯示標籤';
+        toggleLabelBtn.style.borderColor = 'rgba(255, 255, 255, 0.4)';
+        toggleLabelBtn.style.color = '#FFFFFF';
+      }
+    });
+
+    // 🔄 重置/刷新相機邏輯
+    async function resetCamera() {
+      console.log("正在重新初始化相機...");
+      isProcessing = false;
+
+      // 1. 釋放舊的相機 Stream 資源
+      if (currentStream) {
+        currentStream.getTracks().forEach(track => track.stop());
+        currentStream = null;
+      }
+      videoElement.srcObject = null;
+
+      // 2. 重新啟動相機
+      await startWebViewCamera();
+    }
+
+    // 綁定手動刷新按鈕點擊事件
+    resetCamBtn.addEventListener('click', () => {
+      resetCamera();
+    });
+
+    // 🌟 自動Resume機制：當切換回 App 時自動重啟鏡頭
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        console.log("App 回到前台，自動檢查並啟動相機");
+        resetCamera();
+      }
+    });
 
     // 自動適應手機螢幕高解析度
     function resizeCanvas() {
@@ -102,7 +195,7 @@
       const vw = results.image.width;
       const vh = results.image.height;
 
-      // 自動計算 Cover 比例，徹底解決「畫面扁扁變形」問題
+      // 自動計算 Cover 比例
       const canvasAspect = cw / ch;
       const imgAspect = vw / vh;
 
@@ -124,7 +217,7 @@
       canvasCtx.translate(cw, 0);
       canvasCtx.scale(-1, 1);
 
-      // 繪製畫面 (保證不拉伸變形)
+      // 繪製視訊畫面
       canvasCtx.drawImage(results.image, cw - offsetX - renderW, offsetY, renderW, renderH);
 
       if (results.multiFaceLandmarks) {
@@ -197,26 +290,26 @@
             canvasCtx.strokeStyle = '#FFFFFF';
             canvasCtx.stroke();
 
-            // 4. 文字標籤 (反向鏡像以防文字顛倒)
-            canvasCtx.save();
-            canvasCtx.translate(smoothed.x, smoothed.y);
-            canvasCtx.scale(-1, 1);
+            // 4. 文字標籤
+            if (showLabels) {
+              canvasCtx.save();
+              canvasCtx.translate(smoothed.x, smoothed.y);
+              canvasCtx.scale(-1, 1);
 
-            const fontSize = Math.max(12, Math.round(cw * 0.015));
-            canvasCtx.font = `bold ${fontSize}px Arial, sans-serif`;
-            const textWidth = canvasCtx.measureText(label).width;
+              const fontSize = Math.max(12, Math.round(cw * 0.015));
+              canvasCtx.font = `bold ${fontSize}px Arial, sans-serif`;
+              const textWidth = canvasCtx.measureText(label).width;
 
-            // 半透明黑底氣泡膠囊
-            canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.65)';
-            canvasCtx.beginPath();
-            canvasCtx.roundRect(-textWidth / 2 - 6, -fontSize - 12, textWidth + 12, fontSize + 6, 4);
-            canvasCtx.fill();
+              canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+              canvasCtx.beginPath();
+              canvasCtx.roundRect(-textWidth / 2 - 6, -fontSize - 12, textWidth + 12, fontSize + 6, 4);
+              canvasCtx.fill();
 
-            // 亮青色字體
-            canvasCtx.fillStyle = '#00FFCC';
-            canvasCtx.textAlign = 'center';
-            canvasCtx.fillText(label, 0, -10);
-            canvasCtx.restore();
+              canvasCtx.fillStyle = '#00FFCC';
+              canvasCtx.textAlign = 'center';
+              canvasCtx.fillText(label, 0, -10);
+              canvasCtx.restore();
+            }
           };
 
           drawPoint("yintang", "Yintang", yintang);
@@ -253,8 +346,6 @@
     videoElement.autoplay = true;
     videoElement.setAttribute('playsinline', '');
 
-    let isProcessing = false;
-
     async function startWebViewCamera() {
       const constraints = {
         video: {
@@ -279,6 +370,7 @@
     }
 
     function handleStream(stream) {
+      currentStream = stream; // 紀錄當前 stream，方便釋放
       if ('srcObject' in videoElement) {
         videoElement.srcObject = stream;
       } else {
