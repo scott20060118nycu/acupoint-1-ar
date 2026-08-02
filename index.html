@@ -104,7 +104,7 @@
     const toggleLabelBtn = document.getElementById('toggle_label_btn');
     const resetCamBtn = document.getElementById('reset_cam_btn');
 
-    // 🚩 開關狀態：預設顯示文字標籤
+    // 🚩 開關與相機狀態
     let showLabels = true;
     let currentStream = null;
     let isProcessing = false;
@@ -128,26 +128,20 @@
       console.log("正在重新初始化相機...");
       isProcessing = false;
 
-      // 1. 釋放舊的相機 Stream 資源
       if (currentStream) {
         currentStream.getTracks().forEach(track => track.stop());
         currentStream = null;
       }
       videoElement.srcObject = null;
 
-      // 2. 重新啟動相機
       await startWebViewCamera();
     }
 
-    // 綁定手動刷新按鈕點擊事件
-    resetCamBtn.addEventListener('click', () => {
-      resetCamera();
-    });
+    resetCamBtn.addEventListener('click', resetCamera);
 
-    // 🌟 自動Resume機制：當切換回 App 時自動重啟鏡頭
+    // 切換回 App 時自動恢復相機
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
-        console.log("App 回到前台，自動檢查並啟動相機");
         resetCamera();
       }
     });
@@ -183,6 +177,7 @@
     function onResults(results) {
       const cw = canvasElement.width;
       const ch = canvasElement.height;
+      const dpr = window.devicePixelRatio || 1; // 📱 計算手機螢幕 DPI 放大率
       
       canvasCtx.save();
       canvasCtx.clearRect(0, 0, cw, ch);
@@ -223,13 +218,14 @@
       if (results.multiFaceLandmarks) {
         for (const landmarks of results.multiFaceLandmarks) {
           
-          // 繪製 3D FaceMesh 網格
+          // 繪製 3D FaceMesh 網格 (加粗線條)
           canvasCtx.save();
           canvasCtx.translate(cw - offsetX - renderW, offsetY);
           canvasCtx.scale(renderW / cw, renderH / ch);
 
-          drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {color: '#C0C0C040', lineWidth: 1});
-          drawConnectors(canvasCtx, landmarks, FACEMESH_CONTOURS, {color: '#00FFCC70', lineWidth: 1.2});
+          // 📐 加粗網格線：細網格 1.8x DPR，輪廓線 3.5x DPR
+          drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {color: '#C0C0C060', lineWidth: 1.8 * dpr});
+          drawConnectors(canvasCtx, landmarks, FACEMESH_CONTOURS, {color: '#00FFCCB0', lineWidth: 3.5 * dpr});
           canvasCtx.restore();
 
           // 校正後的座標計算
@@ -269,24 +265,24 @@
             y: Math.round(cR_y + (nose.y - cR_y) * 0.45)
           };
 
-          // 繪製標籤與紅點
+          // 繪製標籤與紅點 (依 DPR 動態放大)
           const drawPoint = (name, label, pt) => {
             const smoothed = adaptiveSmoothPoint(name, pt.x, pt.y);
 
-            // 1. 外層紅光暈
+            // 1. 外層紅光暈 (按比例放大)
             canvasCtx.beginPath();
-            canvasCtx.arc(smoothed.x, smoothed.y, 8, 0, 2 * Math.PI);
+            canvasCtx.arc(smoothed.x, smoothed.y, 14 * dpr, 0, 2 * Math.PI);
             canvasCtx.fillStyle = 'rgba(255, 0, 85, 0.35)';
             canvasCtx.fill();
 
-            // 2. 核心紅色圓點
+            // 2. 核心紅色圓點 (按比例放大)
             canvasCtx.beginPath();
-            canvasCtx.arc(smoothed.x, smoothed.y, 4, 0, 2 * Math.PI);
+            canvasCtx.arc(smoothed.x, smoothed.y, 6.5 * dpr, 0, 2 * Math.PI);
             canvasCtx.fillStyle = '#FF0055';
             canvasCtx.fill();
 
             // 3. 白色外框線
-            canvasCtx.lineWidth = 1.5;
+            canvasCtx.lineWidth = 2.5 * dpr;
             canvasCtx.strokeStyle = '#FFFFFF';
             canvasCtx.stroke();
 
@@ -296,18 +292,31 @@
               canvasCtx.translate(smoothed.x, smoothed.y);
               canvasCtx.scale(-1, 1);
 
-              const fontSize = Math.max(12, Math.round(cw * 0.015));
+              // 🔤 設定適合手機顯示的大字體 (約 16px 實體大小)
+              const fontSize = Math.round(16 * dpr);
               canvasCtx.font = `bold ${fontSize}px Arial, sans-serif`;
               const textWidth = canvasCtx.measureText(label).width;
 
-              canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+              const paddingX = 10 * dpr;
+              const paddingY = 6 * dpr;
+              const offsetY = 16 * dpr;
+
+              // 半透明黑底氣泡膠囊
+              canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.75)';
               canvasCtx.beginPath();
-              canvasCtx.roundRect(-textWidth / 2 - 6, -fontSize - 12, textWidth + 12, fontSize + 6, 4);
+              canvasCtx.roundRect(
+                -textWidth / 2 - paddingX,
+                -fontSize - offsetY - (paddingY / 2),
+                textWidth + (paddingX * 2),
+                fontSize + paddingY,
+                6 * dpr
+              );
               canvasCtx.fill();
 
+              // 亮青色字體
               canvasCtx.fillStyle = '#00FFCC';
               canvasCtx.textAlign = 'center';
-              canvasCtx.fillText(label, 0, -10);
+              canvasCtx.fillText(label, 0, -offsetY);
               canvasCtx.restore();
             }
           };
@@ -370,7 +379,7 @@
     }
 
     function handleStream(stream) {
-      currentStream = stream; // 紀錄當前 stream，方便釋放
+      currentStream = stream;
       if ('srcObject' in videoElement) {
         videoElement.srcObject = stream;
       } else {
