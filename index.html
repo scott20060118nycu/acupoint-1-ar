@@ -154,30 +154,48 @@
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
-    // 自適應平滑歷史紀錄
-    const smoothDict = {};
+    // 🛡️ 全域 468 點 Mesh 歸一化空間動態抗抖動濾波器
+    let smoothedLandmarks = null;
 
-    function adaptiveSmoothPoint(name, x, y, alphaMin = 0.1, alphaMax = 0.9, k = 0.05) {
-      if (!smoothDict[name]) {
-        smoothDict[name] = { x, y };
-        return { x, y };
+    function applyFullMeshSmoothing(rawLandmarks) {
+      if (!smoothedLandmarks || smoothedLandmarks.length !== rawLandmarks.length) {
+        // 初次初始化：深拷貝點位
+        smoothedLandmarks = rawLandmarks.map(pt => ({ x: pt.x, y: pt.y, z: pt.z }));
+        return smoothedLandmarks;
       }
-      const ox = smoothDict[name].x;
-      const oy = smoothDict[name].y;
-      const d = Math.sqrt((x - ox) ** 2 + (y - oy) ** 2);
-      const dynamicAlpha = alphaMin + (alphaMax - alphaMin) * Math.exp(-k * d);
-      
-      const nx = Math.round(dynamicAlpha * ox + (1 - dynamicAlpha) * x);
-      const ny = Math.round(dynamicAlpha * oy + (1 - dynamicAlpha) * y);
 
-      smoothDict[name] = { x: nx, y: ny };
-      return { x: nx, y: ny };
+      // 濾波參數配置
+      const alphaMin = 0.05; // 速度快時的動態下限 (維持即時反應)
+      const alphaMax = 0.88; // 靜止時的高強平滑權重 (徹底鎖死抖動)
+      const k = 140;        // 歸一化空間距離敏感係數
+
+      for (let i = 0; i < rawLandmarks.length; i++) {
+        const raw = rawLandmarks[i];
+        const prev = smoothedLandmarks[i];
+
+        // 計算歸一化空間中的移動距離
+        const dx = raw.x - prev.x;
+        const dy = raw.y - prev.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        // 指數衰減動態 Alpha
+        const dynamicAlpha = alphaMin + (alphaMax - alphaMin) * Math.exp(-k * dist);
+
+        // 平滑計算
+        prev.x = dynamicAlpha * prev.x + (1 - dynamicAlpha) * raw.x;
+        prev.y = dynamicAlpha * prev.y + (1 - dynamicAlpha) * raw.y;
+        if (raw.z !== undefined && prev.z !== undefined) {
+          prev.z = dynamicAlpha * prev.z + (1 - dynamicAlpha) * raw.z;
+        }
+      }
+
+      return smoothedLandmarks;
     }
 
     function onResults(results) {
       const cw = canvasElement.width;
       const ch = canvasElement.height;
-      const dpr = window.devicePixelRatio || 1; // 📱 計算手機螢幕 DPI 放大率
+      const dpr = window.devicePixelRatio || 1;
       
       canvasCtx.save();
       canvasCtx.clearRect(0, 0, cw, ch);
@@ -215,129 +233,128 @@
       // 繪製視訊畫面
       canvasCtx.drawImage(results.image, cw - offsetX - renderW, offsetY, renderW, renderH);
 
-      if (results.multiFaceLandmarks) {
-        for (const landmarks of results.multiFaceLandmarks) {
+      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+        // 🌟 核心修正：先對 468 個原始特徵點進行整體平滑過濾
+        const landmarks = applyFullMeshSmoothing(results.multiFaceLandmarks[0]);
           
-          // 繪製 3D FaceMesh 網格 (加粗線條)
-          canvasCtx.save();
-          canvasCtx.translate(cw - offsetX - renderW, offsetY);
-          canvasCtx.scale(renderW / cw, renderH / ch);
+        // 1. 繪製抗抖動後的 3D FaceMesh 網格
+        canvasCtx.save();
+        canvasCtx.translate(cw - offsetX - renderW, offsetY);
+        canvasCtx.scale(renderW / cw, renderH / ch);
 
-          // 📐 加粗網格線：細網格 1.8x DPR，輪廓線 3.5x DPR
-          drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {color: '#C0C0C060', lineWidth: 1.8 * dpr});
-          drawConnectors(canvasCtx, landmarks, FACEMESH_CONTOURS, {color: '#00FFCCB0', lineWidth: 3.5 * dpr});
-          canvasCtx.restore();
+        drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {color: '#C0C0C060', lineWidth: 1.8 * dpr});
+        drawConnectors(canvasCtx, landmarks, FACEMESH_CONTOURS, {color: '#00FFCCB0', lineWidth: 3.5 * dpr});
+        canvasCtx.restore();
 
-          // 校正後的座標計算
-          const getPt = (idx) => ({
-            x: Math.round(offsetX + landmarks[idx].x * renderW),
-            y: Math.round(offsetY + landmarks[idx].y * renderH)
-          });
+        // 2. 校正後的座標計算 (直接使用已平滑點位)
+        const getPt = (idx) => ({
+          x: Math.round(offsetX + landmarks[idx].x * renderW),
+          y: Math.round(offsetY + landmarks[idx].y * renderH)
+        });
 
-          // 剛性穴位幾何計算
-          const yintang = getPt(6);
-          const qingming_L = getPt(133), qingming_R = getPt(362);
-          const zanzhu_L = getPt(55), zanzhu_R = getPt(285);
-          const yuyao_L = getPt(105), yuyao_R = getPt(334);
+        // 剛性穴位幾何計算
+        const yintang = getPt(6);
+        const qingming_L = getPt(133), qingming_R = getPt(362);
+        const zanzhu_L = getPt(55), zanzhu_R = getPt(285);
+        const yuyao_L = getPt(105), yuyao_R = getPt(334);
 
-          const in_L = getPt(133), out_L = getPt(33);
-          const tongzi_L = {
-            x: Math.round(out_L.x + 0.35 * (out_L.x - in_L.x)),
-            y: Math.round(out_L.y + 0.35 * (out_L.y - in_L.y))
-          };
+        const in_L = getPt(133), out_L = getPt(33);
+        const tongzi_L = {
+          x: Math.round(out_L.x + 0.35 * (out_L.x - in_L.x)),
+          y: Math.round(out_L.y + 0.35 * (out_L.y - in_L.y))
+        };
 
-          const in_R = getPt(362), out_R = getPt(263);
-          const tongzi_R = {
-            x: Math.round(out_R.x + 0.35 * (out_R.x - in_R.x)),
-            y: Math.round(out_R.y + 0.35 * (out_R.y - in_R.y))
-          };
+        const in_R = getPt(362), out_R = getPt(263);
+        const tongzi_R = {
+          x: Math.round(out_R.x + 0.35 * (out_R.x - in_R.x)),
+          y: Math.round(out_R.y + 0.35 * (out_R.y - in_R.y))
+        };
 
-          const nose = getPt(1);
-          const cL_x = (in_L.x + out_L.x) / 2, cL_y = (in_L.y + out_L.y) / 2;
-          const sibai_L = {
-            x: Math.round(cL_x),
-            y: Math.round(cL_y + (nose.y - cL_y) * 0.45)
-          };
+        const nose = getPt(1);
+        const cL_x = (in_L.x + out_L.x) / 2, cL_y = (in_L.y + out_L.y) / 2;
+        const sibai_L = {
+          x: Math.round(cL_x),
+          y: Math.round(cL_y + (nose.y - cL_y) * 0.45)
+        };
 
-          const cR_x = (in_R.x + out_R.x) / 2, cR_y = (in_R.y + out_R.y) / 2;
-          const sibai_R = {
-            x: Math.round(cR_x),
-            y: Math.round(cR_y + (nose.y - cR_y) * 0.45)
-          };
+        const cR_x = (in_R.x + out_R.x) / 2, cR_y = (in_R.y + out_R.y) / 2;
+        const sibai_R = {
+          x: Math.round(cR_x),
+          y: Math.round(cR_y + (nose.y - cR_y) * 0.45)
+        };
 
-          // 繪製標籤與紅點 (依 DPR 動態放大)
-          const drawPoint = (name, label, pt) => {
-            const smoothed = adaptiveSmoothPoint(name, pt.x, pt.y);
+        // 3. 繪製標籤與紅點
+        const drawPoint = (label, pt) => {
+          // 1. 外層紅光暈
+          canvasCtx.beginPath();
+          canvasCtx.arc(pt.x, pt.y, 14 * dpr, 0, 2 * Math.PI);
+          canvasCtx.fillStyle = 'rgba(255, 0, 85, 0.35)';
+          canvasCtx.fill();
 
-            // 1. 外層紅光暈 (按比例放大)
+          // 2. 核心紅色圓點
+          canvasCtx.beginPath();
+          canvasCtx.arc(pt.x, pt.y, 6.5 * dpr, 0, 2 * Math.PI);
+          canvasCtx.fillStyle = '#FF0055';
+          canvasCtx.fill();
+
+          // 3. 白色外框線
+          canvasCtx.lineWidth = 2.5 * dpr;
+          canvasCtx.strokeStyle = '#FFFFFF';
+          canvasCtx.stroke();
+
+          // 4. 文字標籤
+          if (showLabels) {
+            canvasCtx.save();
+            canvasCtx.translate(pt.x, pt.y);
+            canvasCtx.scale(-1, 1);
+
+            const fontSize = Math.round(16 * dpr);
+            canvasCtx.font = `bold ${fontSize}px Arial, sans-serif`;
+            const textWidth = canvasCtx.measureText(label).width;
+
+            const paddingX = 10 * dpr;
+            const paddingY = 6 * dpr;
+            const offsetY = 16 * dpr;
+
+            // 半透明黑底氣泡膠囊
+            canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.75)';
             canvasCtx.beginPath();
-            canvasCtx.arc(smoothed.x, smoothed.y, 14 * dpr, 0, 2 * Math.PI);
-            canvasCtx.fillStyle = 'rgba(255, 0, 85, 0.35)';
+            canvasCtx.roundRect(
+              -textWidth / 2 - paddingX,
+              -fontSize - offsetY - (paddingY / 2),
+              textWidth + (paddingX * 2),
+              fontSize + paddingY,
+              6 * dpr
+            );
             canvasCtx.fill();
 
-            // 2. 核心紅色圓點 (按比例放大)
-            canvasCtx.beginPath();
-            canvasCtx.arc(smoothed.x, smoothed.y, 6.5 * dpr, 0, 2 * Math.PI);
-            canvasCtx.fillStyle = '#FF0055';
-            canvasCtx.fill();
+            // 亮青色字體
+            canvasCtx.fillStyle = '#00FFCC';
+            canvasCtx.textAlign = 'center';
+            canvasCtx.fillText(label, 0, -offsetY);
+            canvasCtx.restore();
+          }
+        };
 
-            // 3. 白色外框線
-            canvasCtx.lineWidth = 2.5 * dpr;
-            canvasCtx.strokeStyle = '#FFFFFF';
-            canvasCtx.stroke();
-
-            // 4. 文字標籤
-            if (showLabels) {
-              canvasCtx.save();
-              canvasCtx.translate(smoothed.x, smoothed.y);
-              canvasCtx.scale(-1, 1);
-
-              // 🔤 設定適合手機顯示的大字體 (約 16px 實體大小)
-              const fontSize = Math.round(16 * dpr);
-              canvasCtx.font = `bold ${fontSize}px Arial, sans-serif`;
-              const textWidth = canvasCtx.measureText(label).width;
-
-              const paddingX = 10 * dpr;
-              const paddingY = 6 * dpr;
-              const offsetY = 16 * dpr;
-
-              // 半透明黑底氣泡膠囊
-              canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.75)';
-              canvasCtx.beginPath();
-              canvasCtx.roundRect(
-                -textWidth / 2 - paddingX,
-                -fontSize - offsetY - (paddingY / 2),
-                textWidth + (paddingX * 2),
-                fontSize + paddingY,
-                6 * dpr
-              );
-              canvasCtx.fill();
-
-              // 亮青色字體
-              canvasCtx.fillStyle = '#00FFCC';
-              canvasCtx.textAlign = 'center';
-              canvasCtx.fillText(label, 0, -offsetY);
-              canvasCtx.restore();
-            }
-          };
-
-          drawPoint("yintang", "Yintang", yintang);
-          drawPoint("qL", "Qingming_L", qingming_L);
-          drawPoint("qR", "Qingming_R", qingming_R);
-          drawPoint("zL", "Zanzhu_L", zanzhu_L);
-          drawPoint("zR", "Zanzhu_R", zanzhu_R);
-          drawPoint("yL", "Yuyao_L", yuyao_L);
-          drawPoint("yR", "Yuyao_R", yuyao_R);
-          drawPoint("tL", "Tongziliao_L", tongzi_L);
-          drawPoint("tR", "Tongziliao_R", tongzi_R);
-          drawPoint("sL", "Sibai_L", sibai_L);
-          drawPoint("sR", "Sibai_R", sibai_R);
-        }
+        drawPoint("Yintang", yintang);
+        drawPoint("Qingming_L", qingming_L);
+        drawPoint("Qingming_R", qingming_R);
+        drawPoint("Zanzhu_L", zanzhu_L);
+        drawPoint("Zanzhu_R", zanzhu_R);
+        drawPoint("Yuyao_L", yuyao_L);
+        drawPoint("Yuyao_R", yuyao_R);
+        drawPoint("Tongziliao_L", tongzi_L);
+        drawPoint("Tongziliao_R", tongzi_R);
+        drawPoint("Sibai_L", sibai_L);
+        drawPoint("Sibai_R", sibai_R);
+      } else {
+        // 沒有偵測到臉時重置歷史平滑點
+        smoothedLandmarks = null;
       }
       canvasCtx.restore();
     }
 
-    // 初始化 FaceMesh
+    // 初始化 FaceMesh (提升追蹤穩定度參數)
     const faceMesh = new FaceMesh({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
     });
@@ -345,8 +362,8 @@
     faceMesh.setOptions({
       maxNumFaces: 1,
       refineLandmarks: true,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
+      minDetectionConfidence: 0.7, // 提高偵測門檻
+      minTrackingConfidence: 0.7   // 提高追蹤門檻，極大地減少閃爍抖動
     });
 
     faceMesh.onResults(onResults);
