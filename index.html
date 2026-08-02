@@ -362,8 +362,8 @@
     faceMesh.setOptions({
       maxNumFaces: 1,
       refineLandmarks: true,
-      minDetectionConfidence: 0.7, // 提高偵測門檻
-      minTrackingConfidence: 0.7   // 提高追蹤門檻，極大地減少閃爍抖動
+      minDetectionConfidence: 0.9, // 提高偵測門檻
+      minTrackingConfidence: 0.9   // 提高追蹤門檻，極大地減少閃爍抖動
     });
 
     faceMesh.onResults(onResults);
